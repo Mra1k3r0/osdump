@@ -1,4 +1,4 @@
---// GaG
+--// GaG 
 --// Open Sauce
 if game.PlaceId ~= 126884695634066 then return end
 
@@ -8,9 +8,10 @@ if getgenv().uiUpd then
 end
 
 --// Library and Config (USING THE LIBRARY FROM V0.1)
-local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local repo = "https://raw.githubusercontent.com/Mra1k3r0/saikidesu_data/refs/heads/main/"
+local repo2 = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo2 .. "addons/ThemeManager.lua"))()
 local http = game:GetService("HttpService")
 local folder, path = "grangrant", "grant/config.json"
 
@@ -87,20 +88,23 @@ player.CharacterAdded:Connect(function(newChar)
     backpack = player:WaitForChild("Backpack")
 end)
 
---// Changelog
-local CGL = Tabs.Changelog:AddLeftGroupbox("v0.1")
-local CGL1 = Tabs.Changelog:AddLeftGroupbox("v0.2")
+--// Changelog - USING FULL WIDTH GROUPBOX
+local CGL = Tabs.Changelog:AddFullGroupbox("Version History", "file-clock")
 
+CGL:AddLabel("v0.2 - Latest", true) -- DoesWrap = true for better formatting
+CGL:AddLabel("• Added Miscellaneous Tab")
+CGL:AddLabel("  ▶ Added Sell Pets")
+CGL:AddLabel("  ▶ Added Weight Input")
+CGL:AddLabel("")
+CGL:AddLabel("• Added Vulnerabilities Tab")
+CGL:AddLabel("  ▶ Moved Moon Cat Idle to Vuln")
+CGL:AddLabel("  ▶ Moved Remove Sprinkler to Vuln")
+
+CGL:AddDivider()
+
+CGL:AddLabel("v0.1 - Initial Release", true)
 CGL:AddLabel("• Added Moon Cat Idle")
 CGL:AddLabel("• Added Remove Sprinkler")
-
-CGL1:AddLabel("• Added Miscellaneous Tab")
-CGL1:AddLabel("  ▶ Added Sell Pets")
-CGL1:AddLabel("  ▶ Added Weight Input")
-CGL1:AddLabel("")
-CGL1:AddLabel("• Added Vulnerabilities Tab")
-CGL1:AddLabel("  ▶ Moved Moon Cat Idle to Vuln")
-CGL1:AddLabel("  ▶ Moved Remove Sprinkler to Vuln")
 
 --// Pet Functions
 local function getUniquePetNames()
@@ -318,11 +322,11 @@ VLN:AddButton("ShovelSprinkler", {
     DoubleClick = false
 })
 
---// Services & Modules 
+--// Services & Modules
 local GetPetCooldown = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("GetPetCooldown")
 local IdleHandler = require(ReplicatedStorage.Modules.PetServices.PetActionUserInterfaceService.PetActionsHandlers.Idle)
 
---// Auto Idle 
+--// Auto Idle
 task.spawn(function()
     while uiActive do
         if getgenv().AutoIdle then
@@ -339,7 +343,7 @@ task.spawn(function()
     end
 end)
 
---// Echo Frog Logic 
+--// Echo Frog Logic
 task.spawn(function()
     while uiActive do
         if getgenv().AutoIdleToggle then
@@ -382,8 +386,8 @@ task.spawn(function()
     end
 end)
 
---// Menu 
-local MenuGroup = Tabs["Settings"]:AddLeftGroupbox("Menu")
+--// Menu - USING FULL WIDTH FUNCTION
+local MenuGroup = Tabs["Settings"]:AddFullGroupbox("Menu", "settings")
 
 MenuGroup:AddDropdown("NotificationSide", {
     Values = { "Left", "Right" },
@@ -406,10 +410,10 @@ MenuGroup:AddDropdown("DPIDropdown", {
 })
 
 MenuGroup:AddDivider()
-MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { 
-    Default = "LeftControl", 
-    NoUI = true, 
-    Text = "Menu keybind" 
+MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
+     Default = "LeftControl",
+     NoUI = true,
+     Text = "Menu keybind"
 })
 
 MenuGroup:AddButton("Unload", function()
