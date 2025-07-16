@@ -7,7 +7,7 @@ if getgenv().uiUpd then
     getgenv().uiUpd:Unload()
 end
 
---// Library and Config (USING THE LIBRARY FROM V0.1)
+--// Library and Config
 local repo = "https://raw.githubusercontent.com/Mra1k3r0/saikidesu_data/refs/heads/main/"
 local repo2 = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
 local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
@@ -22,6 +22,7 @@ local defaults = {
     selectedPets = {},
     PetKgInput = 0,
     autoSellEnabled = false,
+    idleDrop = {},
 }
 
 --// Save/Load Functions
@@ -52,7 +53,7 @@ Library.ShowToggleFrameInKeybinds = true
 
 local Window = Library:CreateWindow({
     Title = "Grant",
-    Footer = "v0.2",
+    Footer = "v0.3-kx7m9",
     MobileButtonsSide = "Left",
     NotifySide = "Right",
     Center = true,
@@ -88,10 +89,22 @@ player.CharacterAdded:Connect(function(newChar)
     backpack = player:WaitForChild("Backpack")
 end)
 
---// Changelog - USING FULL WIDTH GROUPBOX
+--// Changelog
 local CGL = Tabs.Changelog:AddFullGroupbox("Version History", "file-clock")
 
-CGL:AddLabel("v0.2 - Latest", true) -- DoesWrap = true for better formatting
+CGL:AddLabel("v0.3-kx7m9 - Latest", true)
+CGL:AddLabel("• Enhanced Pet Detection System")
+CGL:AddLabel("  ▶ Added Pet Selection Dropdown")
+CGL:AddLabel("  ▶ Added Capybara Support")
+CGL:AddLabel("  ▶ Improved Echo Frog/Triceratops Detection")
+CGL:AddLabel("")
+CGL:AddLabel("• Better Notifications")
+CGL:AddLabel("  ▶ Shows Pet Type in Messages")
+CGL:AddLabel("  ▶ Enhanced Idle Status Updates")
+
+CGL:AddDivider()
+
+CGL:AddLabel("v0.2 - Previous", true)
 CGL:AddLabel("• Added Miscellaneous Tab")
 CGL:AddLabel("  ▶ Added Sell Pets")
 CGL:AddLabel("  ▶ Added Weight Input")
@@ -194,7 +207,7 @@ task.spawn(function()
                                 humanoid:EquipTool(tool)
                                 task.wait(0.1)
                                 ReplicatedStorage.GameEvents.SellPet_RE:FireServer(tool)
-                                task.wait(0.5) -- Prevent spam
+                                task.wait(0.5)
                             end)
                         end
                     end
@@ -230,6 +243,18 @@ end)
 
 --// Vuln Tab
 local VLN = Tabs.Vuln:AddLeftGroupbox("Idle")
+
+VLN:AddDropdown("IdleDropdown", {
+    Values = { "Moon Cat", "Capybara" },
+    Default = getgenv().idleDrop or {},
+    Multi = true,
+    Text = "Select Pet",
+    Callback = function(selected)
+        getgenv().idleDrop = selected
+        config.idleDrop = selected
+        save()
+    end
+})
 
 VLN:AddToggle("MoonCat", {
     Text = "Auto Idle",
@@ -325,16 +350,44 @@ VLN:AddButton("ShovelSprinkler", {
 --// Services & Modules
 local GetPetCooldown = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("GetPetCooldown")
 local IdleHandler = require(ReplicatedStorage.Modules.PetServices.PetActionUserInterfaceService.PetActionsHandlers.Idle)
+local ActivePetsService = require(ReplicatedStorage.Modules.PetServices.ActivePetsService)
 
---// Auto Idle
+--// Capybara Logic
 task.spawn(function()
     while uiActive do
-        if getgenv().AutoIdle then
-            for _, v in ipairs(workspace.PetsPhysical:GetChildren()) do
-                if v:IsA("BasePart") and v.Name == "PetMover" then
-                    local model = v:FindFirstChild(v:GetAttribute("UUID"))
-                    if model and model:IsA("Model") and model:GetAttribute("CurrentSkin") == "Moon Cat" then
-                        task.spawn(IdleHandler.Activate, v)
+        if getgenv().AutoIdleToggle and getgenv().idleDrop and getgenv().idleDrop["Capybara"] then
+            for _, petPart in pairs(workspace.PetsPhysical:GetChildren()) do
+                if petPart:IsA("BasePart") and petPart.Name == "PetMover" then
+                    local uuid = petPart:GetAttribute("UUID")
+                    local owner = petPart:GetAttribute("OWNER")
+                    
+                    if owner == player.Name and uuid then
+                        local petData = ActivePetsService:GetPetData(owner, uuid)
+                        if petData and petData.PetType == "Capybara" then
+                            task.spawn(IdleHandler.Activate, petPart)
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(1)
+    end
+end)
+
+--// Moon Cat Logic
+task.spawn(function()
+    while uiActive do
+        if getgenv().AutoIdle or (getgenv().AutoIdleToggle and getgenv().idleDrop and getgenv().idleDrop["Moon Cat"]) then
+            for _, petPart in pairs(workspace.PetsPhysical:GetChildren()) do
+                if petPart:IsA("BasePart") and petPart.Name == "PetMover" then
+                    local uuid = petPart:GetAttribute("UUID")
+                    local owner = petPart:GetAttribute("OWNER")
+                    
+                    if owner == player.Name and uuid then
+                        local petData = ActivePetsService:GetPetData(owner, uuid)
+                        if petData and petData.PetType == "Moon Cat" then
+                            task.spawn(IdleHandler.Activate, petPart)
+                        end
                     end
                 end
             end
@@ -347,32 +400,35 @@ end)
 task.spawn(function()
     while uiActive do
         if getgenv().AutoIdleToggle then
-            for _, v in ipairs(workspace.PetsPhysical:GetChildren()) do
-                if v:IsA("BasePart") and v.Name == "PetMover" then
-                    local uuid = v:GetAttribute("UUID")
-                    local model = uuid and v:FindFirstChild(uuid)
+            for _, mover in pairs(workspace.PetsPhysical:GetChildren()) do
+                if mover:IsA("BasePart") and mover.Name == "PetMover" then
+                    local uuid = mover:GetAttribute("UUID")
+                    local owner = mover:GetAttribute("OWNER")
                     
-                    if model and model:IsA("Model") and model:GetAttribute("CurrentSkin") == nil then
-                        local ok, cooldowns = pcall(GetPetCooldown.InvokeServer, GetPetCooldown, uuid)
-                        if ok and typeof(cooldowns) == "table" then
-                            for _, cd in ipairs(cooldowns) do
-                                local time = tonumber(cd.Time)
-                                if time and time >= 79 and time <= 81 and not getgenv().AutoIdle then
-                                    Library:Notify({
-                                        Title = "Auto Idle",
-                                        Description = "True",
-                                        Time = 3,
-                                    })
-                                    getgenv().AutoIdle = true
-                                    task.delay(10, function()
-                                        getgenv().AutoIdle = false
+                    if uuid and owner == player.Name then
+                        local petData = ActivePetsService:GetPetData(owner, uuid)
+                        if petData and (petData.PetType == "Echo Frog" or petData.PetType == "Triceratops") then
+                            local ok, cooldowns = pcall(GetPetCooldown.InvokeServer, GetPetCooldown, uuid)
+                            if ok and typeof(cooldowns) == "table" then
+                                for _, cd in pairs(cooldowns) do
+                                    local time = tonumber(cd.Time)
+                                    if time and time >= 79 and time <= 81 and not getgenv().AutoIdle then
                                         Library:Notify({
                                             Title = "Auto Idle",
-                                            Description = "False",
+                                            Description = petData.PetType .. " Enabled",
                                             Time = 3,
                                         })
-                                    end)
-                                    break
+                                        getgenv().AutoIdle = true
+                                        task.delay(10, function()
+                                            getgenv().AutoIdle = false
+                                            Library:Notify({
+                                                Title = "Auto Idle",
+                                                Description = petData.PetType .. " Disabled",
+                                                Time = 3,
+                                            })
+                                        end)
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -386,7 +442,7 @@ task.spawn(function()
     end
 end)
 
---// Menu - USING FULL WIDTH FUNCTION
+--// Menu
 local MenuGroup = Tabs["Settings"]:AddFullGroupbox("Menu", "settings")
 
 MenuGroup:AddDropdown("NotificationSide", {
