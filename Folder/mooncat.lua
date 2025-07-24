@@ -4,6 +4,13 @@ if game.PlaceId ~= 126884695634066 then
 	return
 end
 
+--// Prevent script multiplication
+if getgenv().scriptRunning then 
+    print("Script already running, preventing duplicate...")
+    return 
+end
+getgenv().scriptRunning = true
+
 --// grant grant grant
 if getgenv().uiUpd then
 	getgenv().uiUpd:Unload()
@@ -26,6 +33,10 @@ local defaults = {
 	autoSellEnabled = false,
 	idleDrop = {},
 	idleInput = 80,
+	autoRejoinEnabled = false,
+	rejoinDelay = 15,
+	maxRetries = 5,
+	serverHopEnabled = false,
 }
 
 --// Save/Load Functions
@@ -58,7 +69,7 @@ Library.ShowToggleFrameInKeybinds = true
 
 local Window = Library:CreateWindow({
 	Title = "Grant",
-	Footer = "v0.4-test-bx9k2",
+	Footer = "v0.5",
 	MobileButtonsSide = "Left",
 	NotifySide = "Right",
 	Center = true,
@@ -139,7 +150,16 @@ end
 --// Changelog
 local CGL = Tabs.Changelog:AddFullGroupbox("Version History", "file-clock")
 
-CGL:AddLabel("v0.4-test-bx9k2 - Latest", true)
+CGL:AddLabel("v0.5 - Latest", true)
+CGL:AddLabel("• Added Auto Rejoin System")
+CGL:AddLabel("  ▶ Automatic Server Reconnection")
+CGL:AddLabel("  ▶ Server Hopping on Max Retries")
+CGL:AddLabel("  ▶ Configurable Rejoin Delay & Max Attempts")
+CGL:AddLabel("")
+
+CGL:AddDivider()
+
+CGL:AddLabel("v0.4-test-bx9k2 - Previous", true)
 CGL:AddLabel("• Manual Pet List Refresh")
 CGL:AddLabel("  ▶ Added Refresh Button for Pet List")
 CGL:AddLabel("  ▶ Dual Moon Cat Detection (Old + New Method)")
@@ -150,7 +170,6 @@ CGL:AddLabel("")
 CGL:AddLabel("• Bug Fixes")
 CGL:AddLabel("  ▶ Fixed Pet Selection Not Loading from Config")
 CGL:AddLabel("  ▶ Fixed Dropdown Not Showing Saved Selections")
-CGL:AddLabel("")
 
 CGL:AddDivider()
 
@@ -281,6 +300,88 @@ task.spawn(function()
 	end
 end)
 
+--// Auto Rejoin Section
+local MSC2 = Tabs.Misc:AddRightGroupbox("Auto Rejoin")
+
+MSC2:AddToggle("AutoRejoinToggle", {
+	Text = "Auto Rejoin",
+	Default = getgenv().autoRejoinEnabled or false,
+	Callback = function(val)
+		print("Auto Rejoin toggled:", val)
+		getgenv().autoRejoinEnabled = val
+		config.autoRejoinEnabled = val
+		save()
+	end,
+})
+
+MSC2:AddInput("RejoinDelay", {
+	Text = "Rejoin Delay (seconds)",
+	Default = tostring(getgenv().rejoinDelay or 15),
+	Numeric = true,
+	Finished = true,
+	Placeholder = "Enter delay in seconds (default: 15)",
+	Callback = function(value)
+		local delay = tonumber(value) or 15
+		if delay < 5 then
+			delay = 5
+		end -- Minimum 5 seconds
+		print("Rejoin delay set to:", delay)
+		getgenv().rejoinDelay = delay
+		config.rejoinDelay = delay
+		save()
+	end,
+})
+
+MSC2:AddInput("MaxRetries", {
+	Text = "Max Retry Attempts",
+	Default = tostring(getgenv().maxRetries or 5),
+	Numeric = true,
+	Finished = true,
+	Placeholder = "Enter max retries (default: 5)",
+	Callback = function(value)
+		local retries = tonumber(value) or 5
+		if retries < 1 then
+			retries = 1
+		end -- Minimum 1 retry
+		print("Max retries set to:", retries)
+		getgenv().maxRetries = retries
+		config.maxRetries = retries
+		save()
+	end,
+})
+
+MSC2:AddToggle("ServerHopToggle", {
+	Text = "Server Hop",
+	Default = getgenv().serverHopEnabled or false,
+	Callback = function(val)
+		print("Server Hop toggled:", val)
+		getgenv().serverHopEnabled = val
+		config.serverHopEnabled = val
+		save()
+	end,
+})
+
+MSC2:AddButton("TestRejoin", {
+	Text = "Test Rejoin",
+	Func = function()
+		if getgenv().autoRejoinEnabled then
+			Library:Notify({
+				Title = "Auto Rejoin Test",
+				Description = "Rejoining in " .. (getgenv().rejoinDelay or 15) .. " seconds...",
+				Time = 3,
+			})
+			performRejoin()
+		else
+			Library:Notify({
+				Title = "Auto Rejoin Disabled",
+				Description = "Enable Auto Rejoin first!",
+				Time = 2,
+			})
+		end
+	end,
+	DoubleClick = true,
+})
+
 --// Pet List Updater
 task.spawn(function()
 	while uiActive do
@@ -302,6 +403,321 @@ task.spawn(function()
 		end
 
 		getgenv().selectedPets = preserved
+	end
+end)
+
+--// Auto Rejoin Logic 
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local GuiService = game:GetService("GuiService")
+local CoreGui = game:GetService("CoreGui")
+local rejoinAttempts = 0
+
+local function queueRejoinScript()
+    local queueFunction = (syn and syn.queue_on_teleport)
+        or queue_on_teleport
+        or (fluxus and fluxus.queue_on_teleport)
+        or function() end
+    local queueScript = string.format(
+        [[
+        -- Auto rejoin persistence (prevent multiplication)
+        if getgenv().scriptAlreadyQueued then return end
+        getgenv().scriptAlreadyQueued = true
+        
+        task.wait(5)
+        if game.PlaceId == %d then
+            loadstring(game:HttpGet("%s"))()
+        end
+    ]],
+        game.PlaceId,
+        "https://raw.githubusercontent.com/Mra1k3r0/osdump/refs/heads/main/Folder/mooncat.lua"
+    )
+    queueFunction(queueScript)
+end
+
+local function findServers(cursor, attempts)
+	attempts = attempts or 1
+	if attempts > 5 then
+		return {}
+	end
+
+	local req = (syn and syn.request)
+		or (http and http.request)
+		or http_request
+		or (fluxus and fluxus.request)
+		or request
+	if not req then
+		return {}
+	end
+
+	local url =
+		string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", game.PlaceId)
+	if cursor and cursor ~= "" then
+		url = url .. "&cursor=" .. cursor
+	end
+
+	local success, response = pcall(function()
+		return req({ Url = url })
+	end)
+
+	if not success or response.StatusCode ~= 200 then
+		return {}
+	end
+
+	local parseSuccess, data = pcall(function()
+		return HttpService:JSONDecode(response.Body)
+	end)
+
+	if not parseSuccess or not data or not data.data then
+		return {}
+	end
+
+	local servers = {}
+	for _, server in pairs(data.data) do
+		if
+			type(server) == "table"
+			and server.id
+			and server.playing
+			and server.maxPlayers
+			and server.playing < server.maxPlayers
+			and server.id ~= game.JobId
+		then
+			table.insert(servers, {
+				id = server.id,
+				playing = tonumber(server.playing),
+				maxPlayers = tonumber(server.maxPlayers),
+				fullness = tonumber(server.playing) / tonumber(server.maxPlayers),
+			})
+		end
+	end
+
+	if data.nextPageCursor and #servers < 20 then
+		local moreServers = findServers(data.nextPageCursor, attempts + 1)
+		for _, server in ipairs(moreServers) do
+			table.insert(servers, server)
+		end
+	end
+
+	return servers
+end
+
+function performRejoin()
+	if not getgenv().autoRejoinEnabled then
+		return
+	end
+
+	rejoinAttempts = rejoinAttempts + 1
+
+	Library:Notify({
+		Title = "Auto Rejoin",
+		Description = "Attempt " .. rejoinAttempts .. "/" .. (getgenv().maxRetries or 5),
+		Time = 3,
+	})
+
+	queueRejoinScript()
+
+	task.wait(math.max(getgenv().rejoinDelay or 15, 3))
+
+	if rejoinAttempts >= (getgenv().maxRetries or 5) and getgenv().serverHopEnabled then
+		Library:Notify({
+			Title = "Server Hopping",
+			Description = "Searching for new server...",
+			Time = 2,
+		})
+
+		local servers = findServers()
+
+		if #servers > 0 then
+			table.sort(servers, function(a, b)
+				return a.fullness < b.fullness
+			end)
+
+			Library:Notify({
+				Title = "Found Servers",
+				Description = "Found " .. #servers .. " servers, joining best one...",
+				Time = 2,
+			})
+
+			-- Try multiple servers if first fails
+			for i = 1, math.min(3, #servers) do
+				local server = servers[i]
+				local success = pcall(function()
+					TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, player)
+				end)
+
+				if success then
+					task.wait(3)
+					break
+				else
+					task.wait(1)
+				end
+			end
+		else
+			Library:Notify({
+				Title = "No Servers Found",
+				Description = "Falling back to regular rejoin...",
+				Time = 2,
+			})
+			TeleportService:Teleport(game.PlaceId, player)
+		end
+	else
+		for i = 1, 3 do
+			local success = pcall(function()
+				TeleportService:Teleport(game.PlaceId, player)
+			end)
+			if success then
+				break
+			end
+			task.wait(1)
+		end
+	end
+end
+
+local function setupKickDetection()
+	local function checkAndDismissKickGui()
+		for _, gui in pairs(CoreGui:GetChildren()) do
+			if gui:IsA("ScreenGui") then
+				for _, frame in pairs(gui:GetDescendants()) do
+					if frame:IsA("TextLabel") then
+						local text = frame.Text:lower()
+						if
+							text:find("kicked")
+							or text:find("disconnected")
+							or text:find("lost connection")
+							or text:find("reconnect")
+							or text:find("server")
+							or text:find("closing")
+							or text:find("leave")
+						then
+							if getgenv().autoRejoinEnabled then
+								Library:Notify({
+									Title = "Auto Rejoin: True",
+									Description = "Auto rejoining in "
+										.. (getgenv().rejoinDelay or 15)
+										.. " seconds...",
+									Time = 2,
+								})
+
+								for _, button in pairs(gui:GetDescendants()) do
+									if button:IsA("TextButton") or button:IsA("ImageButton") then
+										local buttonText = button.Text and button.Text:lower() or ""
+										if
+											buttonText:find("leave")
+											or buttonText:find("ok")
+											or buttonText:find("dismiss")
+											or buttonText:find("close")
+										then
+											pcall(function()
+												for _, connection in pairs(getconnections(button.MouseButton1Click)) do
+													connection:Fire()
+												end
+												for _, connection in pairs(getconnections(button.Activated)) do
+													connection:Fire()
+												end
+											end)
+											task.wait(0.5)
+											break
+										end
+									end
+								end
+
+								pcall(function()
+									gui:Destroy()
+								end)
+
+								task.wait(1)
+								performRejoin()
+								return true
+							end
+						end
+					end
+				end
+			end
+		end
+		return false
+	end
+
+	CoreGui.ChildAdded:Connect(function(child)
+		if child:IsA("ScreenGui") then
+			task.wait(0.5) -- Wait for GUI to fully load
+			checkAndDismissKickGui()
+		end
+	end)
+
+	task.spawn(function()
+		while uiActive do
+			if getgenv().autoRejoinEnabled then
+				checkAndDismissKickGui()
+			end
+			task.wait(1)
+		end
+	end)
+
+	pcall(function()
+		local GuiService = game:GetService("GuiService")
+		GuiService.ErrorMessageChanged:Connect(function()
+			if getgenv().autoRejoinEnabled then
+				task.wait(1)
+				Library:Notify({
+					Title = "Error Detected",
+					Description = "Auto rejoining...",
+					Time = 2,
+				})
+				performRejoin()
+			end
+		end)
+	end)
+end
+
+TeleportService.TeleportInitFailed:Connect(function(plr, teleportResult)
+	if plr == player and getgenv().autoRejoinEnabled then
+		Library:Notify({
+			Title = "Teleport Failed",
+			Description = "Reason: " .. tostring(teleportResult.Name),
+			Time = 3,
+		})
+		task.wait(2)
+		performRejoin()
+	end
+end)
+
+game:GetService("Players").PlayerRemoving:Connect(function(plr)
+	if plr == player and getgenv().autoRejoinEnabled then
+		performRejoin()
+	end
+end)
+
+--// Anti-AFK
+task.spawn(function()
+	local VirtualUser = game:GetService("VirtualUser")
+	player.Idled:Connect(function()
+		if getgenv().autoRejoinEnabled then
+			VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+			task.wait(1)
+			VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+			Library:Notify({
+				Title = "Anti-AFK",
+				Description = "Prevented idle kick",
+				Time = 1,
+			})
+		end
+	end)
+end)
+
+setupKickDetection()
+
+--// Reset attempts on successful connection
+task.spawn(function()
+	while uiActive do
+		task.wait(60)
+		if player.Parent and game:GetService("RunService").Heartbeat and rejoinAttempts > 0 then
+			rejoinAttempts = 0
+			Library:Notify({
+				Title = "Auto Rejoin",
+				Description = "Connection stable - attempts reset",
+				Time = 2,
+			})
+		end
 	end
 end)
 
@@ -648,6 +1064,7 @@ ThemeManager:SetFolder("hikochairs")
 ThemeManager:ApplyToTab(Tabs["Settings"])
 
 Library:OnUnload(function()
-	uiActive = false
-	getgenv().uiUpd = nil
+    uiActive = false
+    getgenv().uiUpd = nil
+    getgenv().scriptRunning = false  
 end)
