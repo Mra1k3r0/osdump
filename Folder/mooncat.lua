@@ -1,5 +1,5 @@
 --// GaG 
---// Open Sauce - Complete Script with Auto Cook & Fixed Auto Rejoin
+--// Open Sauce - Complete Script with Working Moon Cat Deploy
 if game.PlaceId ~= 126884695634066 then return end
 
 --// Prevent script multiplication
@@ -41,7 +41,7 @@ local defaults = {
     autoEquipEnabled = false,
     equipCount = 7,
     equipThreshold = 80,
-    unequipTimer = 40,
+    unequipTimer = 92,
     savedDropPosition = nil,
     usePositionDrop = false,
     useFastEquip = true,
@@ -54,7 +54,10 @@ local defaults = {
     cookIngredient4 = "",
     cookIngredient5 = "",
     mutationsOnly = false,
-    cookCooldownMinutes = 7, -- Default 7 minute cooldown
+    cookCooldownMinutes = 7,
+    debugLogging = false,
+    autoFeedGiantEnabled = false,
+    antiKickDetection = false,
 }
 
 --// Save/Load Functions
@@ -87,7 +90,7 @@ Library.ShowToggleFrameInKeybinds = true
 
 local Window = Library:CreateWindow({
     Title = "Grant",
-    Footer = "v2.0 - Auto Cook Cooldown Added",
+    Footer = "v2.5 - Auto Feed Giant Feature",
     MobileButtonsSide = "Left",
     NotifySide = "Right",
     Center = true,
@@ -116,7 +119,6 @@ local backpack = player:WaitForChild("Backpack")
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 
--- Handle character respawning
 player.CharacterAdded:Connect(function(newChar)
     character = newChar
     humanoid = character:WaitForChild("Humanoid")
@@ -129,6 +131,341 @@ local IdleHandler = require(ReplicatedStorage.Modules.PetServices.PetActionUserI
 local ActivePetsService = require(ReplicatedStorage.Modules.PetServices.ActivePetsService)
 local PetsService = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("PetsService")
 local CookingPotService = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("CookingPotService_RE")
+local FeedNPC_RE = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("FeedNPC_RE")
+
+--// Cleanup Timer Management
+local activeCleanupTimers = {}
+
+--// Auto Feed Giant Functions
+local function findFoodInInventory()
+    local cookedFoods = {
+        "salad", "sandwich", "pie", "waffle", "hotdog", "ice cream", "donut", 
+        "pizza", "sushi", "cake", "burger", "smoothie", "candy apple", 
+        "sweet tea", "porridge", "spaghetti", "corndog", "soup"
+    }
+    
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local toolName = tool.Name:lower()
+            
+            if toolName:find("age") then
+                continue
+            end
+            
+            if toolName:find("seed") then
+                continue
+            end
+            
+            for _, cookedFood in ipairs(cookedFoods) do
+                if toolName:find(cookedFood) then
+                    return tool
+                end
+            end
+        end
+    end
+    
+    return nil
+end
+
+local function equipFood(food)
+    if not food then return false end
+    
+    pcall(function()
+        food.Parent = character
+        task.wait(0.2)
+        if humanoid then
+            humanoid:EquipTool(food)
+            task.wait(0.3)
+        end
+    end)
+    
+    return food.Parent == character
+end
+
+local function feedGiant()
+    local args = {
+        "Giant"
+    }
+    FeedNPC_RE:FireServer(unpack(args))
+    task.wait(0.5)
+end
+
+local function feedEquippedItem()
+    local equippedTool = character:FindFirstChildWhichIsA("Tool")
+    if equippedTool then
+        feedGiant()
+        print("Fed Giant with equipped item: " .. equippedTool.Name)
+        Library:Notify({
+            Title = "Fed Giant",
+            Description = "Used equipped: " .. equippedTool.Name,
+            Time = 2,
+        })
+        return true
+    else
+        print("No item equipped to feed Giant")
+        Library:Notify({
+            Title = "Feed Giant",
+            Description = "No item equipped",
+            Time = 2,
+        })
+        return false
+    end
+end
+
+local function performAutoFeedGiant()
+    if not getgenv().autoFeedGiantEnabled then return end
+    
+    local food = findFoodInInventory()
+    if food then
+        if equipFood(food) then
+            feedGiant()
+            print("Auto Feed Giant: Fed " .. food.Name)
+            Library:Notify({
+                Title = "Fed Giant",
+                Description = "Used: " .. food.Name,
+                Time = 2,
+            })
+            return true
+        else
+            print("Auto Feed Giant: Failed to equip " .. food.Name)
+        end
+    else
+        if getgenv().debugLogging then
+            print("Auto Feed Giant: No food found in inventory")
+        end
+    end
+    
+    return false
+end
+
+--// WORKING MOON CAT FUNCTIONS
+local function findMoonCatsInBackpack()
+    local foundMoonCats = {}
+    local backpack = player:WaitForChild("Backpack")
+    
+    if getgenv().debugLogging then
+        print("Starting Moon Cat search in backpack...")
+    end
+    
+    for _, tool in pairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local toolName = tool.Name:lower()
+            
+            if getgenv().debugLogging then
+                print("Found tool: " .. tool.Name)
+            end
+            
+            if toolName:find("moon") and toolName:find("cat") then
+                if getgenv().debugLogging then
+                    print("FOUND MOON CAT TOOL: " .. tool.Name)
+                end
+                
+                local uuid = nil
+                for attributeName, attributeValue in pairs(tool:GetAttributes()) do
+                    if type(attributeValue) == "string" and attributeValue:match("%{?[%w%-]+%}?") then
+                        uuid = attributeValue
+                        if getgenv().debugLogging then
+                            print("Found UUID attribute '" .. attributeName .. "': " .. uuid)
+                        end
+                        break
+                    end
+                end
+                
+                if not uuid then
+                    for _, child in pairs(tool:GetChildren()) do
+                        if child:IsA("StringValue") and child.Value:match("%{?[%w%-]+%}?") then
+                            uuid = child.Value
+                            if getgenv().debugLogging then
+                                print("Found UUID in StringValue '" .. child.Name .. "': " .. uuid)
+                            end
+                            break
+                        end
+                    end
+                end
+                
+                if uuid then
+                    if not uuid:match("^%{.*%}$") then
+                        uuid = "{" .. uuid .. "}"
+                    end
+                    
+                    table.insert(foundMoonCats, {
+                        tool = tool,
+                        uuid = uuid,
+                        name = tool.Name
+                    })
+                    
+                    if getgenv().debugLogging then
+                        print("Added Moon Cat to list: " .. tool.Name .. " with UUID: " .. uuid)
+                    end
+                else
+                    print("ERROR: No UUID found for Moon Cat: " .. tool.Name)
+                end
+            end
+        end
+    end
+    
+    print("Found " .. #foundMoonCats .. " Moon Cat(s)")
+    return foundMoonCats
+end
+
+local function equipSingleMoonCat(moonCatData)
+    if getgenv().debugLogging then
+        print("=== EQUIP MOON CAT ATTEMPT ===")
+        print("Attempting to equip: " .. moonCatData.name .. " with UUID: " .. moonCatData.uuid)
+    end
+    
+    local args = {
+        "EquipPet",
+        moonCatData.uuid,
+        CFrame.new(28.620519638061523, 0, -114.18805694580078, 1, 0, 0, 0, 1, 0, 0, 0, 1)
+    }
+    
+    if getgenv().debugLogging then
+        print("Firing EquipPet command with args:")
+        print("  Command: " .. args[1])
+        print("  UUID: " .. args[2])
+        print("  Position: " .. tostring(args[3]))
+    end
+    
+    local success, error = pcall(function()
+        PetsService:FireServer(unpack(args))
+    end)
+    
+    if success then
+        if getgenv().debugLogging then
+            print("EquipPet command fired successfully!")
+        end
+        return true
+    else
+        print("ERROR firing EquipPet command: " .. tostring(error))
+        Library:Notify({
+            Title = "Equip Error",
+            Description = "Failed: " .. tostring(error),
+            Time = 5,
+        })
+        return false
+    end
+end
+
+local function unequipAllMoonCats()
+    if getgenv().debugLogging then
+        print("Starting Moon Cat cleanup...")
+    end
+    
+    local unequippedCount = 0
+    
+    for _, petPart in pairs(workspace.PetsPhysical:GetChildren()) do
+        if petPart:IsA("BasePart") and petPart.Name == "PetMover" then
+            local uuid = petPart:GetAttribute("UUID")
+            local owner = petPart:GetAttribute("OWNER")
+            
+            if owner == player.Name and uuid then
+                local petData = ActivePetsService:GetPetData(owner, uuid)
+                local isMoonCat = false
+                
+                if petData and petData.PetType == "Moon Cat" then
+                    isMoonCat = true
+                end
+                
+                local model = petPart:FindFirstChild(uuid)
+                if model and model:IsA("Model") and model:GetAttribute("CurrentSkin") == "Moon Cat" then
+                    isMoonCat = true
+                end
+                
+                if isMoonCat then
+                    if getgenv().debugLogging then
+                        print("Unequipping Moon Cat with UUID: " .. uuid)
+                    end
+                    
+                    local args = {
+                        "UnequipPet",
+                        uuid
+                    }
+                    
+                    local success, error = pcall(function()
+                        PetsService:FireServer(unpack(args))
+                    end)
+                    
+                    if success then
+                        unequippedCount = unequippedCount + 1
+                        if getgenv().debugLogging then
+                            print("Unequipped Moon Cat: " .. uuid)
+                        end
+                    else
+                        print("Failed to unequip Moon Cat: " .. tostring(error))
+                    end
+                    
+                    task.wait(0.1)
+                end
+            end
+        end
+    end
+    
+    if unequippedCount > 0 then
+        print("Cleanup complete! Unequipped " .. unequippedCount .. " Moon Cat(s)")
+        Library:Notify({
+            Title = "Cleanup Complete",
+            Description = "Collected " .. unequippedCount .. " Moon Cat(s)",
+            Time = 3,
+        })
+    end
+    
+    return unequippedCount
+end
+
+local function equipAndDropMoonCats()
+    if not getgenv().autoEquipEnabled then return end
+    
+    print("Moon Cat auto equip triggered")
+    
+    local moonCats = findMoonCatsInBackpack()
+    
+    if #moonCats == 0 then
+        print("No Moon Cats found in backpack!")
+        Library:Notify({
+            Title = "No Moon Cats",
+            Description = "No Moon Cats found in backpack!",
+            Time = 5,
+        })
+        return
+    end
+    
+    local deployedCount = 0
+    local maxDeploy = math.min(getgenv().equipCount or 6, #moonCats)
+    
+    for i = 1, maxDeploy do
+        local moonCat = moonCats[i]
+        local success = equipSingleMoonCat(moonCat)
+        if success then
+            deployedCount = deployedCount + 1
+        end
+        task.wait(0.1)
+    end
+    
+    print("Deployed " .. deployedCount .. " Moon Cat(s)")
+    Library:Notify({
+        Title = "Deploy Complete",
+        Description = "Deployed " .. deployedCount .. " Moon Cat(s)",
+        Time = 3,
+    })
+    
+    for timerId, _ in pairs(activeCleanupTimers) do
+        activeCleanupTimers[timerId] = nil
+    end
+    
+    if deployedCount > 0 then
+        local timerId = tick()
+        activeCleanupTimers[timerId] = true
+        
+        task.spawn(function()
+            task.wait(getgenv().unequipTimer or 90)
+            if activeCleanupTimers[timerId] then
+                activeCleanupTimers[timerId] = nil
+                unequipAllMoonCats()
+            end
+        end)
+    end
+end
 
 --// Get Active Pet Types Function
 local function getActivePetTypes()
@@ -150,7 +487,6 @@ local function getActivePetTypes()
         end
     end
     
-    -- Also check for Moon Cat using the old method
     for _, v in ipairs(workspace.PetsPhysical:GetChildren()) do
         if v:IsA("BasePart") and v.Name == "PetMover" then
             local model = v:FindFirstChild(v:GetAttribute("UUID"))
@@ -185,7 +521,6 @@ end
 local function findFruitInInventory(fruitName, mutationsOnly)
     if not fruitName or fruitName == "" then return nil end
     
-    -- List of cooked foods to ignore
     local cookedFoods = {
         "salad", "sandwich", "pie", "waffle", "hotdog", "ice cream", "donut", 
         "pizza", "sushi", "cake", "burger", "smoothie", "candy apple", 
@@ -197,17 +532,14 @@ local function findFruitInInventory(fruitName, mutationsOnly)
             local toolName = tool.Name:lower()
             local searchName = fruitName:lower()
             
-            -- Skip if this doesn't have KG (not a fruit/food item)
             if not toolName:find("kg") then
                 continue
             end
             
-            -- Skip if this contains "seed" (it's a seed, not fruit)
             if toolName:find("seed") then
                 continue
             end
             
-            -- Skip if this is a cooked food
             local isCookedFood = false
             for _, cookedFood in ipairs(cookedFoods) do
                 if toolName:find(cookedFood) then
@@ -217,11 +549,9 @@ local function findFruitInInventory(fruitName, mutationsOnly)
             end
             
             if not isCookedFood then
-                -- Check if the tool contains the fruit name
                 if toolName:find(searchName) then
-                    -- If mutations only is enabled, check for mutations (brackets at start)
                     if mutationsOnly then
-                        if toolName:match("^%[.-%]") then -- Has mutations at start
+                        if toolName:match("^%[.-%]") then
                             return tool
                         end
                     else
@@ -281,7 +611,6 @@ local function performAutoCook()
     local submitted = 0
     local mutationsOnly = getgenv().mutationsOnly or false
     
-    -- Submit ALL ingredients first before cooking
     for i, ingredient in ipairs(ingredients) do
         if ingredient and ingredient ~= "" then
             local fruit = findFruitInInventory(ingredient, mutationsOnly)
@@ -300,11 +629,9 @@ local function performAutoCook()
         end
     end
     
-    -- Only cook if we submitted at least 1 ingredient
     if submitted > 0 then
         cookBest()
         
-        -- Set the cooldown timer AFTER cooking
         local cooldownMinutes = getgenv().cookCooldownMinutes or 7
         local cooldownSeconds = cooldownMinutes * 60
         lastCookTime = tick()
@@ -317,7 +644,6 @@ local function performAutoCook()
         })
         print("Auto Cook: Completed with " .. submitted .. " ingredients. Cooldown: " .. cooldownMinutes .. " minutes")
         
-        -- Wait for cooking to complete before next cycle
         task.wait(3)
     end
 end
@@ -325,18 +651,18 @@ end
 --// Changelog
 local CGL = Tabs.Changelog:AddFullGroupbox("Updates", "file-clock")
 
-CGL:AddLabel("v2.0 - Auto Cook Cooldown", true)
-CGL:AddLabel("- Added 7 minute cooldown after cooking")
-CGL:AddLabel("- Prevents cooking spam and server overload")
-CGL:AddLabel("- Shows remaining cooldown time")
+CGL:AddLabel("v2.5 - Auto Feed Giant Feature", true)
+CGL:AddLabel("- Added Auto Feed Giant toggle in Misc tab")
+CGL:AddLabel("- Automatically finds and feeds food to Giant")
+CGL:AddLabel("- Prioritizes cooked foods over raw ingredients")
+CGL:AddLabel("- Shows notifications when feeding Giant")
 CGL:AddDivider()
 
-CGL:AddLabel("v1.9 - Auto Cook & Fixed Rejoin", true)
-CGL:AddLabel("- Auto cook runs continuously when enabled")
-CGL:AddLabel("- Fixed ingredient search to ignore cooked foods")
-CGL:AddLabel("- Fixed auto rejoin to retry same server")
-CGL:AddLabel("- Server hop only when enabled")
-CGL:AddLabel("- Keeps trying full servers until success")
+CGL:AddLabel("v2.4 - Simplified Logging & Fixed Cleanup", true)
+CGL:AddLabel("- Fixed cleanup notification spam")
+CGL:AddLabel("- Simplified Moon Cat logging by default")
+CGL:AddLabel("- Added debug logging toggle")
+CGL:AddLabel("- Changed button names to Deploy/Unequip Now")
 
 --// Pet Functions
 local function getUniquePetNames()
@@ -397,6 +723,40 @@ MSC:AddToggle("SellPetToggle", {
     end,
 })
 
+--// Auto Feed Giant Section
+local MSC_FEED = Tabs.Misc:AddLeftGroupbox("Auto Feed Giant")
+
+MSC_FEED:AddToggle("AutoFeedGiantToggle", {
+    Text = "Auto Feed Giant",
+    Default = getgenv().autoFeedGiantEnabled or false,
+    Callback = function(val)
+        getgenv().autoFeedGiantEnabled = val
+        config.autoFeedGiantEnabled = val
+        save()
+        if val then
+            Library:Notify({
+                Title = "Auto Feed Giant",
+                Description = "Enabled - Will feed available food to Giant",
+                Time = 3,
+            })
+        else
+            Library:Notify({
+                Title = "Auto Feed Giant",
+                Description = "Disabled",
+                Time = 2,
+            })
+        end
+    end,
+})
+
+MSC_FEED:AddButton("FeedEquipped", {
+    Text = "Feed Equipped",
+    Func = function()
+        feedEquippedItem()
+    end,
+    DoubleClick = false,
+})
+
 --// Auto Sell Logic
 task.spawn(function()
     while uiActive do
@@ -430,6 +790,18 @@ task.spawn(function()
                     end
                 end
             end
+        end
+    end
+end)
+
+--// Auto Feed Giant Logic
+task.spawn(function()
+    while uiActive do
+        if getgenv().autoFeedGiantEnabled then
+            performAutoFeedGiant()
+            task.wait(0) -- Changed from 2 to 0 for faster feeding
+        else
+            task.wait(5) -- Wait longer when disabled
         end
     end
 end)
@@ -517,6 +889,29 @@ MSC2:AddToggle("PersistentRejoin", {
     end
 })
 
+MSC2:AddToggle("AntiKickDetection", {
+    Text = "Anti-Kick Detection",
+    Default = getgenv().antiKickDetection or false,
+    Callback = function(val)
+        getgenv().antiKickDetection = val
+        config.antiKickDetection = val
+        save()
+        if val then
+            Library:Notify({
+                Title = "Anti-Kick Detection",
+                Description = "Enabled - Will detect kick messages",
+                Time = 3,
+            })
+        else
+            Library:Notify({
+                Title = "Anti-Kick Detection",
+                Description = "Disabled - May help with chat/leaderboard issues",
+                Time = 3,
+            })
+        end
+    end
+})
+
 MSC2:AddButton("ForceRejoin", {
     Text = "Force Rejoin Now",
     Func = function()
@@ -559,9 +954,8 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
 local rejoinAttempts = 0
-local currentJobId = game.JobId -- This is the SAME server we want to rejoin
+local currentJobId = game.JobId
 
---// Queue script for persistence across teleports
 local function queueRejoinScript()
     local queueFunction = (syn and syn.queue_on_teleport)
         or queue_on_teleport
@@ -582,7 +976,6 @@ local function queueRejoinScript()
     queueFunction(queueScript)
 end
 
---// Function to check server space
 local function checkOriginalServerSpace()
     if not getgenv().smartServerDetection then
         return
@@ -615,7 +1008,6 @@ local function checkOriginalServerSpace()
     end)
 end
 
---// Function to rejoin the SAME server (will keep trying even if full)
 function rejoinSameServer(retryCount)
     retryCount = retryCount or 1
     local maxRetries = getgenv().maxRetries or 5
@@ -648,7 +1040,6 @@ function rejoinSameServer(retryCount)
             })
             rejoinSameServer(retryCount + 1)
         else
-            -- After max retries, decide what to do
             if getgenv().serverHopEnabled then
                 Library:Notify({
                     Title = "Max Retries Reached",
@@ -662,14 +1053,13 @@ function rejoinSameServer(retryCount)
                     Description = "Will keep trying same server...",
                     Time = 3,
                 })
-                task.wait(retryDelay * 2) 
-                rejoinSameServer(1) 
+                task.wait(retryDelay * 2)
+                rejoinSameServer(1)
             end
         end
     end
 end
 
---// Server search function
 local function findServers(cursor, attempts)
     attempts = attempts or 1
     if attempts > 5 then return {} end
@@ -709,7 +1099,6 @@ local function findServers(cursor, attempts)
     return servers
 end
 
---// Function to server hop (only when enabled)
 function performServerHop()
     local servers = findServers()
     if #servers > 0 then
@@ -742,14 +1131,12 @@ function performServerHop()
     end
 end
 
---// Main rejoin function
 function performRejoin()
     if not getgenv().autoRejoinEnabled then return end
     rejoinAttempts = rejoinAttempts + 1
     rejoinSameServer(1)
 end
 
---// Handle teleport failures (including server full)
 TeleportService.TeleportInitFailed:Connect(function(plr, teleportResult)
     if plr == player and getgenv().autoRejoinEnabled then
         if teleportResult == Enum.TeleportResult.GameFull then
@@ -769,7 +1156,6 @@ TeleportService.TeleportInitFailed:Connect(function(plr, teleportResult)
     end
 end)
 
---// Detect kick/disconnect messages
 local function setupKickDetection()
     local function checkAndDismissKickGui()
         for _, gui in pairs(CoreGui:GetChildren()) do
@@ -780,7 +1166,9 @@ local function setupKickDetection()
                         if text:find("kicked") or text:find("disconnected") or text:find("lost connection") or 
                            text:find("reconnect") or text:find("server") or text:find("closing") or text:find("leave") then
                             if getgenv().autoRejoinEnabled then
-                                Library:Notify({ Title = "Disconnect Detected", Description = "Auto rejoining same server...", Time = 2 })
+                                if getgenv().antiKickDetection then
+                                    Library:Notify({ Title = "Disconnect Detected", Description = "Auto rejoining same server...", Time = 2 })
+                                end
                                 pcall(function() gui:Destroy() end)
                                 performRejoin()
                                 return true
@@ -810,14 +1198,12 @@ local function setupKickDetection()
     end)
 end
 
---// Handle game shutdown/removal
 game:GetService("Players").PlayerRemoving:Connect(function(plr)
     if plr == player and getgenv().autoRejoinEnabled then
         performRejoin()
     end
 end)
 
---// Anti-AFK
 task.spawn(function()
     local VirtualUser = game:GetService("VirtualUser")
     player.Idled:Connect(function()
@@ -830,10 +1216,8 @@ task.spawn(function()
     end)
 end)
 
--- Initialize detection
 setupKickDetection()
 
--- Reset attempts on successful connection
 task.spawn(function()
     while uiActive do
         task.wait(60)
@@ -907,7 +1291,7 @@ if getgenv().idleDrop and next(getgenv().idleDrop) then
 end
 
 VLN:AddToggle("MoonCat", {
-    Text = "Auto Idle",
+    Text = "Auto Idle (Patched)",
     Default = getgenv().AutoIdleToggle,
     Callback = function(val)
         getgenv().AutoIdleToggle = val
@@ -1150,12 +1534,12 @@ VLN2:AddInput("EquipThreshold", {
 
 VLN2:AddInput("UnequipTimer", { 
     Text = "Cleanup (sec)", 
-    Default = tostring(getgenv().unequipTimer or 40), 
+    Default = tostring(getgenv().unequipTimer or 90), 
     Numeric = true, 
     Finished = true, 
-    Placeholder = "40", 
+    Placeholder = "90", 
     Callback = function(value) 
-        getgenv().unequipTimer = math.max(10, tonumber(value) or 40)
+        getgenv().unequipTimer = math.max(10, tonumber(value) or 90)
         config.unequipTimer = getgenv().unequipTimer
         save()
     end 
@@ -1189,14 +1573,25 @@ VLN2:AddInput("EquipDelay", {
 })
 
 VLN2:AddDivider()
-local positionLabel = VLN2:AddLabel("Position: Not Set")
+VLN2:AddToggle("DebugLogging", { 
+    Text = "Debug Logging", 
+    Default = getgenv().debugLogging or false, 
+    Callback = function(val) 
+        getgenv().debugLogging = val
+        config.debugLogging = val
+        save()
+    end 
+})
+
+VLN2:AddDivider()
+local positionLabel = VLN2:AddLabel("Position: Default Set")
 
 local function updatePositionLabel()
     if getgenv().savedDropPosition then
         local pos = getgenv().savedDropPosition
         positionLabel:SetText(string.format("Position: %.0f, %.0f, %.0f", pos.X, pos.Y, pos.Z))
     else
-        positionLabel:SetText("Position: Not Set")
+        positionLabel:SetText("Position: Default Set")
     end
 end
 
@@ -1255,6 +1650,23 @@ VLN2:AddToggle("UseFastEquip", {
     end 
 })
 
+VLN2:AddDivider()
+VLN2:AddButton("DeployNow", { 
+    Text = "Deploy Now", 
+    Func = function()
+        print("Manual deploy triggered!")
+        equipAndDropMoonCats()
+    end 
+})
+
+VLN2:AddButton("UnequipNow", { 
+    Text = "Unequip Now", 
+    Func = function()
+        print("Manual unequip triggered!")
+        unequipAllMoonCats()
+    end 
+})
+
 if config.savedDropPosition then
     getgenv().savedDropPosition = Vector3.new(
         config.savedDropPosition.X,
@@ -1263,259 +1675,6 @@ if config.savedDropPosition then
     )
 end
 updatePositionLabel()
-
---// Enhanced Auto Equip Logic with Reliability
-local unequipTimers = {}
-
-local function getMoonCatsFromBackpack()
-    local moonCats = {}
-    for _, tool in ipairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") and tool.Name:find("Moon Cat") then
-            table.insert(moonCats, tool)
-        end
-    end
-    return moonCats
-end
-
-local function verifyPetSpawned(toolName, timeout)
-    timeout = timeout or 3
-    local startTime = tick()
-    
-    while tick() - startTime < timeout do
-        for _, petPart in pairs(workspace.PetsPhysical:GetChildren()) do
-            if petPart:IsA("BasePart") and petPart.Name == "PetMover" and petPart:GetAttribute("OWNER") == player.Name then
-                local uuid = petPart:GetAttribute("UUID")
-                if uuid then
-                    local petData = ActivePetsService:GetPetData(player.Name, uuid)
-                    if petData and petData.PetType and petData.PetType == "Moon Cat" then
-                        return true
-                    end
-                end
-            end
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
-local function equipSingleMoonCat(tool, dropPosition, retryCount)
-    retryCount = retryCount or 1
-    local maxRetries = getgenv().equipRetries or 3
-    local equipDelay = getgenv().equipDelay or 0.8
-    
-    print(string.format("Equipping %s (%d/%d)", tool.Name, retryCount, maxRetries))
-    
-    local success = false
-    local usedFastMethod = false
-    
-    if getgenv().useFastEquip then
-        local fastSuccess = pcall(function()
-            if dropPosition and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                player.Character.HumanoidRootPart.CFrame = CFrame.new(dropPosition)
-                task.wait(0.3)
-            end
-            
-            local commands = {"EquipPet", "DeployPet", "ActivatePet", "SummonPet"}
-            for _, command in ipairs(commands) do
-                local args = {command, tool.Name}
-                PetsService:FireServer(unpack(args))
-                task.wait(0.2)
-            end
-        end)
-        
-        if fastSuccess then
-            task.wait(1) -- Wait for spawn
-            if verifyPetSpawned(tool.Name, 2) then
-                usedFastMethod = true
-                success = true
-                print("Fast method OK: " .. tool.Name)
-            else
-                print("Fast method failed: " .. tool.Name)
-            end
-        end
-    end
-    
-    if not success then
-        local traditionalSuccess = pcall(function()
-            if tool.Parent ~= backpack then
-                tool.Parent = backpack
-                task.wait(0.2)
-            end
-            
-            if dropPosition and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                player.Character.HumanoidRootPart.CFrame = CFrame.new(dropPosition)
-                task.wait(0.3)
-            end
-            
-            tool.Parent = character
-            task.wait(0.2)
-            
-            if humanoid and humanoid.Parent then
-                humanoid:EquipTool(tool)
-                task.wait(equipDelay)
-                
-                if tool.Parent == character then
-                    local activated = false
-                    
-                    if tool:FindFirstChild("RemoteEvent") then
-                        tool.RemoteEvent:FireServer()
-                        activated = true
-                    end
-                    
-                    if not activated and tool:FindFirstChild("Remote") then
-                        tool.Remote:FireServer()
-                        activated = true
-                    end
-                    
-                    if not activated then
-                        tool:Activate()
-                    end
-                    
-                    task.wait(0.5)
-                    
-                    if verifyPetSpawned(tool.Name, 3) then
-                        success = true
-                        print("Traditional OK: " .. tool.Name)
-                    else
-                        print("Traditional failed: " .. tool.Name)
-                    end
-                else
-                    print("Equip failed: " .. tool.Name)
-                end
-            else
-                print("No humanoid: " .. tool.Name)
-            end
-        end)
-        
-        if not traditionalSuccess then
-            print("Error: " .. tool.Name)
-        end
-    end
-    
-    if not success and retryCount < maxRetries then
-        print(string.format("Retry %s in 1s...", tool.Name))
-        task.wait(1)
-        return equipSingleMoonCat(tool, dropPosition, retryCount + 1)
-    end
-    
-    return success, usedFastMethod
-end
-
-local function equipAndDropMoonCats(count)
-    local moonCats = getMoonCatsFromBackpack()
-    if #moonCats == 0 then
-        Library:Notify({ Title = "No Mooncats", Description = "None found in backpack", Time = 2 })
-        return
-    end
-    
-    local dropPosition = nil
-    if getgenv().usePositionDrop and getgenv().savedDropPosition then
-        dropPosition = getgenv().savedDropPosition
-    end
-    
-    local equipped = 0
-    local failed = 0
-    local toolsToUnequip = {}
-    local usedFastMethod = false
-    
-    Library:Notify({ 
-        Title = "Equipping", 
-        Description = string.format("Deploying %d mooncats", math.min(count, #moonCats)), 
-        Time = 2 
-    })
-    
-    for i = 1, math.min(count, #moonCats) do
-        local tool = moonCats[i]
-        
-        if not player.Character or not player.Character:FindFirstChild("Humanoid") then
-            player.CharacterAdded:Wait()
-            character = player.Character
-            humanoid = character:WaitForChild("Humanoid")
-            task.wait(1)
-        end
-        
-        local success, fastMethod = equipSingleMoonCat(tool, dropPosition)
-        
-        if success then
-            equipped = equipped + 1
-            if fastMethod then
-                usedFastMethod = true
-            else
-                table.insert(toolsToUnequip, tool)
-            end
-        else
-            failed = failed + 1
-        end
-        
-        task.wait(0.3)
-    end
-    
-    if equipped > 0 then
-        local methodUsed = usedFastMethod and "fast" or "normal"
-        local positionText = dropPosition and "at position" or "here"
-        
-        Library:Notify({ 
-            Title = "Mooncat Deploy", 
-            Description = string.format("Success: %d, Failed: %d", equipped, failed), 
-            Time = 3 
-        })
-        
-        local timerId = tick()
-        unequipTimers[timerId] = true
-        task.delay(getgenv().unequipTimer or 40, function()
-            if unequipTimers[timerId] then
-                unequipTimers[timerId] = nil
-                local unequipped = 0
-                local collected = 0        
-
-                for _, tool in ipairs(toolsToUnequip) do
-                    if tool and tool.Parent == character then
-                        pcall(function()
-                            tool.Parent = backpack
-                            unequipped = unequipped + 1
-                        end)
-                    end
-                end
-                
-                pcall(function()
-                    local CollectPet = ReplicatedStorage:FindFirstChild("GameEvents"):FindFirstChild("CollectPet")
-                    if not CollectPet then
-                        CollectPet = ReplicatedStorage:FindFirstChild("GameEvents"):FindFirstChild("PickupPet") or
-                                   ReplicatedStorage:FindFirstChild("GameEvents"):FindFirstChild("DeleteObject")
-                    end
-                    
-                    if CollectPet then
-                        for _, petPart in pairs(workspace.PetsPhysical:GetChildren()) do
-                            if petPart:IsA("BasePart") and petPart.Name == "PetMover" and petPart:GetAttribute("OWNER") == player.Name then
-                                local uuid = petPart:GetAttribute("UUID")
-                                if uuid then
-                                    local petData = ActivePetsService:GetPetData(player.Name, uuid)
-                                    if petData and petData.PetType then
-                                        if petData.PetType ~= "Triceratops" and petData.PetType ~= "Echo Frog" then
-                                            CollectPet:FireServer(petPart)
-                                            collected = collected + 1
-                                            task.wait(0.1)
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end)
-                
-                if unequipped > 0 or collected > 0 then
-                    Library:Notify({ Title = "Cleanup", Description = "Unequipped " .. unequipped .. ", collected " .. collected, Time = 2 })
-                end
-            end
-        end)
-    else
-        Library:Notify({ 
-            Title = "Deploy Failed", 
-            Description = "No mooncats equipped", 
-            Time = 2 
-        })
-    end
-end
 
 --// Auto Equip Monitor
 task.spawn(function()
@@ -1535,11 +1694,7 @@ task.spawn(function()
                                     local time = tonumber(cd.Time)
                                     local targetTime = tonumber(getgenv().equipThreshold) or 80
                                     if time and time >= targetTime - 1 and time <= targetTime + 1 then
-                                        local moonCats = getMoonCatsFromBackpack()
-                                        if #moonCats > 0 then
-                                            local equipCount = getgenv().equipCount or 6
-                                            equipAndDropMoonCats(equipCount)
-                                        end
+                                        equipAndDropMoonCats()
                                         break
                                     end
                                 end
@@ -1738,5 +1893,3 @@ Library:OnUnload(function()
     getgenv().uiUpd = nil
     getgenv().scriptRunning = false
 end)
-
--- BAAKKA 
